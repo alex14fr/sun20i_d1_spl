@@ -80,11 +80,18 @@ void main(void)
 	if (status)
 		goto _BOOT_ERROR;
 
+#ifndef CFG_EXT2_LOADER
 	status = load_package();
 	if(status == 0 )
 		load_image(&uboot_base, &optee_base, &monitor_base, &rtos_base, &opensbi_base, &dtb_base);
 	else
 		goto _BOOT_ERROR;
+#else
+	char *append_cmdline;
+	status = load_ext2(&uboot_base, &optee_base, &monitor_base, &rtos_base, &opensbi_base, &dtb_base, &append_cmdline);
+	if(status != 0)
+		goto _BOOT_ERROR;
+#endif
 
 	if (dtb_base) {
 		void *fdt = (void *)dtb_base;

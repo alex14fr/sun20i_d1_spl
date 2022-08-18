@@ -1,0 +1,1 @@
+make CROSS_COMPILE=/opt/riscv64-linux-musl-cross/bin/riscv64-linux-musl- p=sun20iw1p1 CFG_EXT2_LOADER=y mmc

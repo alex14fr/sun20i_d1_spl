@@ -12,6 +12,10 @@ MAIN   += simulate_main.o
 else
 MAIN   += boot0_main.o
 endif
+ifeq ($(CFG_EXT2_LOADER),y)
+MAIN   += ext2load.o
+endif
+
 COBJS   += load_image.o
 
 SRCS	:= $(MAIN:.o=.c) $(COBJS:.o=.c) $(HEAD:.o=.c)
