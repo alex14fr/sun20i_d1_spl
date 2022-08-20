@@ -132,28 +132,34 @@ void ext2_get_bgdesc(struct ext2_sb *sb, uint32_t bg_num, char *tmp, char *dest)
 }
 
 /* read the block map of inode inode_num in bmap */
-/* tmp is a scratch workspace whose size is at least one block */
+/* tmp is a scratch workspace whose size is at least one sector */
 /* returns the size of the file, in bytes */
 uint32_t ext2_read_inode_block_map(struct ext2_sb *sb, int inode_num, char *tmp, uint32_t *bmap) {
-	/* read inode table of the block group of the inode */
+	/* get location of inode table of the block group of the inode */
 	uint32_t bg_of_inode=(inode_num-1)/sb->inodes_per_group;
 	ext2_get_bgdesc(sb, bg_of_inode, tmp+512, tmp);
 	uint32_t inode_table_block_nr=INAT(uint32_t, tmp, 0x8);
-	printf("inode %d is in block group %d, inode table of this block group is at block %d\n", 
+	printf("inode %d is in block group %d, inode table of this block group starts at block %d\n", 
 				inode_num, bg_of_inode, inode_table_block_nr);
-	ext2_read_block(sb, inode_table_block_nr, tmp);
-
+	/* get location of this inode in its inode table */
 	uint32_t off_into_bg_inode_table=sb->inode_size*((inode_num-1)%sb->inodes_per_group);
-	printf("inode info at offset %d\n", off_into_bg_inode_table);
+	printf("A=%d B=%d C=%d\n", sb->inode_size, inode_num, sb->inodes_per_group);
+	uint32_t abs_inode=(sb->part_offset+inode_table_block_nr*sb->block_size)*512+off_into_bg_inode_table; /* in bytes */
+	uint32_t sector_nr=abs_inode/512;
+	uint32_t off_into_sector=abs_inode%512;
+	printf("inode info at offset %d into inode table of block group = absolute byte %d, sector %d, off into sector %d \n", 
+				off_into_bg_inode_table, abs_inode, sector_nr, off_into_sector);
+	/* fetch the sector containing requested inode */
+	mmc_bread(SDC_NO, sector_nr, 1, tmp);
 
 	/* copy block map */
-	memcpy((char*)bmap, tmp+off_into_bg_inode_table+0x28, 60);
-
+	memcpy((char*)bmap, tmp+off_into_sector+0x28, 60);
 	printf("got block map: \n");
 	for(int i=0; i<15; i++) printf("%d ", INAT(uint32_t, bmap, 4*i));
 	printf("\n");
 
-	uint32_t fsize=INAT(uint32_t, tmp, off_into_bg_inode_table+0x4); 
+	/* get file size */
+	uint32_t fsize=INAT(uint32_t, tmp, off_into_sector+0x4); 
 	printf("file size=%d\n", fsize);
 
 	return(fsize);
@@ -249,19 +255,19 @@ uint32_t ext2_inode_num(struct ext2_sb *sb, char *filename, uint16_t name_len, c
 	while(idx<dirent_size) {
 		uint16_t c_name_len=INAT(uint16_t, dirent, idx+0x6);
 		if(c_name_len != name_len) {
-			printf("c_name_len=%d, mismatch %d\n", c_name_len, name_len);
+			//printf("c_name_len=%d, mismatch %d\n", c_name_len, name_len);
 		} else {
 			if(memcmp(filename, dirent+idx+0x8, name_len)==0) {
 				uint32_t inode_num=INAT(uint32_t, dirent, idx);
 				printf("%s is at inode %d\n", filename, inode_num);
 				return(inode_num);
 			} else { 
-				printf("name mismatch\n"); 
+				//printf("name mismatch\n"); 
 			}
 		}
 		uint16_t reclen=INAT(uint16_t, dirent, idx+0x4);
 		idx+=reclen;
-		printf("reclen=%d, idx after=%d, dirent_size=%d\n", reclen, idx, dirent_size);
+		//printf("reclen=%d, idx after=%d, dirent_size=%d\n", reclen, idx, dirent_size);
 		if(reclen==0) break;
 	}
 	return(0); // not found
@@ -277,7 +283,8 @@ int load_ext2(phys_addr_t *uboot_base, phys_addr_t *optee_base, \
 	char *buf=malloc(1024);
 	char *rootdir=malloc(1024);
 	printf("addr rootdir=%lx\n",rootdir);
-	struct ext2_sb *sb=malloc(sizeof(struct ext2_sb));
+	struct ext2_sb sbb;
+	struct ext2_sb *sb=&sbb; 
 
 	printf("addr &rc=%lx &part_num=%lx mbr=%lx buf=%lx rootdir=%lx",&rc,&part_num,mbr,buf,rootdir);
 
