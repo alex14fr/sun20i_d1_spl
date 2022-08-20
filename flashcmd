@@ -1,0 +1,11 @@
+set -x
+block=/dev/sdb
+if grep -q $block /proc/mounts; then echo $block is mounted ; exit 1; fi
+if test -b $block; then
+	#doas dd if=nboot/boot0_sdcard.bin of=$block bs=512 seek=16
+	doas dd if=nboot/boot0_sdcard.bin of=$block bs=512 seek=256
+	sync
+else
+	echo $block is not block device
+fi
+

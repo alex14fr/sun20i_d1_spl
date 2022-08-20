@@ -13,10 +13,10 @@ else
 MAIN   += boot0_main.o
 endif
 ifeq ($(CFG_EXT2_LOADER),y)
-MAIN   += ext2load.o
-endif
-
+COBJS   += ext2load.o
+else
 COBJS   += load_image.o
+endif
 
 SRCS	:= $(MAIN:.o=.c) $(COBJS:.o=.c) $(HEAD:.o=.c)
 OBJS	:= $(addprefix $(obj),$(COBJS) $(COBJS-y) $(SOBJS))

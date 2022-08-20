@@ -138,4 +138,11 @@ void pattern_end(uint32_t pass);
 int gunzip(void *dst, int dstlen, unsigned char *src, unsigned long *lenp);
 
 void neon_enable(void);
+
+#ifdef CFG_EXT2_LOADER
+int load_ext2(phys_addr_t *uboot_base, phys_addr_t *optee_base, \
+				phys_addr_t *monitor_base, phys_addr_t *rtos_base, \
+				phys_addr_t *opensbi_base, phys_addr_t *dtb_base, char **append_cmdline);
 #endif
+#endif
+

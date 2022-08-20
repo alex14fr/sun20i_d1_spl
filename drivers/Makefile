@@ -63,8 +63,10 @@ endif
 endif
 
 LIBS-$(CFG_SUNXI_SDMMC)$(CFG_SUNXI_MMC) += drivers/mmc/$(PLATFORM)/libmmc.o
+ifneq ($(CFG_EXT2_LOADER), yes)
 ifeq ($(CFG_SUNXI_SBOOT),)
 	LIBS-$(CFG_SUNXI_SDMMC) += nboot/load_image_mmc/libloadmmc.o
+endif
 endif
 
 LIBS-$(CFG_SUNXI_SPINOR) += drivers/spinor/libspinor.o
