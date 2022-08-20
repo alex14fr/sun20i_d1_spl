@@ -13,10 +13,12 @@ int load_ext2(phys_addr_t *uboot_base, phys_addr_t *optee_base, \
 	*optee_base=*monitor_base=*rtos_base=0;
 	*cmdline=NULL;
 
+/*
 	if((rc=sunxi_mmc_init(SDC_NO, 4, BT0_head.prvt_head.storage_gpio, 16))<0)
 		return(rc);
 
 	printf("mmc_init ok\n");
+*/
 
 	char *buf=malloc(512);
 
