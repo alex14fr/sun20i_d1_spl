@@ -28,7 +28,7 @@
 extern const boot0_file_head_t  BT0_head;
 
 #define SDC_NO 0   /* number of SD Card */
-#define BGT_SIZE 2048
+#define BGT_SIZE 1024 /* maximal size of block group descriptor table (in bytes) */
 
 #define INAT(type, ptr, offset) *((type *)(ptr+offset))
 
@@ -39,7 +39,7 @@ struct ext2_sb {
 	uint32_t inodes_per_group;
 	uint32_t blocks_count;
 	uint32_t blocks_per_group;
-	char bg_table[BGT_SIZE]; /* block group descriptor table */
+//	char bg_table[BGT_SIZE]; /* block group descriptor table */
 };
 
 int ext2_sb_read(char *mbr, int part_num, char *buf, struct ext2_sb *sb) {
@@ -64,8 +64,8 @@ int ext2_sb_read(char *mbr, int part_num, char *buf, struct ext2_sb *sb) {
 	}
 	uint32_t log_blksz=INAT(uint32_t, buf, 0x18); 
 	sb->block_size=(1 << (1+log_blksz));
-	if(sb->block_size>8) {
-		printf("Partition %d : block size (%d) larger than 4096\n", part_num, sb->block_size*512);
+	if(sb->block_size>2) {
+		printf("Partition %d : block size (%d) larger than 1024\n", part_num, sb->block_size*512);
 		return(-1);
 	}
 	sb->inode_size=INAT(uint16_t, buf, 0x58); 
@@ -79,7 +79,7 @@ int ext2_sb_read(char *mbr, int part_num, char *buf, struct ext2_sb *sb) {
 }
 
 int ext2_read_block(struct ext2_sb *sb, uint32_t block_num, char *buf) {
-	printf(" (read block %d)\n", block_num);
+	printf(" (read block %d part_off=%d block_size=%d)\n", block_num, sb->part_offset, sb->block_size);
 	int rc;
 	if((rc=mmc_bread(SDC_NO, sb->part_offset+block_num*sb->block_size, sb->block_size, buf))<0) {
 		printf("read block %d failed\n", block_num);
@@ -88,8 +88,12 @@ int ext2_read_block(struct ext2_sb *sb, uint32_t block_num, char *buf) {
 	return(rc);
 }
 
+#if 0
 /* cache block group descriptor table into the sb struct */
-void ext2_read_bgtable(struct ext2_sb *sb) {
+/* for memory reasons max block size=max BGTable size=1024B, so max block groups=1024/32=32 */
+/* with default blocks per group (8192) this gives a maximal FS size of 256MiB, */
+/* use the -g parameter of mke2fs if you want more */
+static void ext2_read_bgtable(struct ext2_sb *sb) {
 	/* figure out how many blocks are occupied by block group descriptor table */
 	uint32_t bg_count=(sb->blocks_count+sb->blocks_per_group-1)/sb->blocks_per_group;
 	uint32_t bgtable_size=32*bg_count; /* bgtable size in bytes, each block grp descriptor is 32B */
@@ -97,11 +101,11 @@ void ext2_read_bgtable(struct ext2_sb *sb) {
 		printf("Warning: block group descriptor table size (%d) is larger than %d, truncating\n", bgtable_size, BGT_SIZE);
 		bgtable_size=BGT_SIZE;
 	}
-	bgtable_size=(bgtable_size+512*sb->block_size-1)/(512*sb->block_size); /* number of blocks for the bgtable */
+	bgtable_size=1; //(bgtable_size+512*sb->block_size-1)/(512*sb->block_size); /* number of blocks for the bgtable */
 
 	/* if blocksize>1024B : superblock is at block 0+1024B, first block group descriptor in block 1+0B */
 	/* if blocksize==1024B: superblock is at block 1+0B, first block group descriptor in block 2+0B */
-	uint32_t bgtable_begin=(sb->block_size > 2 ? 1 : 2);
+	uint32_t bgtable_begin=2;   //(sb->block_size > 2 ? 1 : 2);
 
 	printf("%d block groups, block group descriptor table has %d block(s) starting from block %d\n", 
 			bg_count, bgtable_size, bgtable_begin);
@@ -109,36 +113,53 @@ void ext2_read_bgtable(struct ext2_sb *sb) {
 	for(uint32_t bl=0; bl<bgtable_size; bl++) 
 		ext2_read_block(sb, bgtable_begin+bl, sb->bg_table+512*sb->block_size*bl);
 }
+#endif
 
-/* reads the block map of inode inode_num in bmap */
+/* read a block group descriptor into dest (32 bytes) */
+/* tmp is a scratch of at least 512 bytes */
+void ext2_get_bgdesc(struct ext2_sb *sb, uint32_t bg_num, char *tmp, char *dest) {
+	printf("ext2_get_bgdesc: bg_num=%d\n", bg_num);
+	/* if blocksize>1024B : superblock is at block 0+1024B, first block group descriptor in block 1+0B */
+	/* if blocksize==1024B: superblock is at block 1+0B, first block group descriptor in block 2+0B */
+	uint32_t bgtable_begin=2;   //(sb->block_size > 2 ? 1 : 2);
+	uint32_t off_absolute=512*(sb->part_offset+bgtable_begin*sb->block_size)+32*bg_num; // in bytes
+	uint32_t sector_number=off_absolute/512;
+	uint16_t off_into_sector=off_absolute%512;
+	printf("ext2_get_bgdesc: part_offset=%d block_size=%d bg_num=%d off_absolute=%d sector_number=%d off_into_sector=%d\n", 
+			sb->part_offset, sb->block_size, bg_num, off_absolute, sector_number, off_into_sector);
+	mmc_bread(SDC_NO, sector_number, 1, tmp);
+	memcpy(dest, tmp+off_into_sector, 32);
+}
+
+/* read the block map of inode inode_num in bmap */
 /* tmp is a scratch workspace whose size is at least one block */
 /* returns the size of the file, in bytes */
 uint32_t ext2_read_inode_block_map(struct ext2_sb *sb, int inode_num, char *tmp, uint32_t *bmap) {
 	/* read inode table of the block group of the inode */
 	uint32_t bg_of_inode=(inode_num-1)/sb->inodes_per_group;
-	uint32_t inode_table_block_nr=INAT(uint32_t, sb->bg_table, 32*bg_of_inode+0x8);
-	for(int i=0;i<16;i++) printf("sb->bgtable[%d]=%x\n", i, sb->bg_table[i]);
+	ext2_get_bgdesc(sb, bg_of_inode, tmp+512, tmp);
+	uint32_t inode_table_block_nr=INAT(uint32_t, tmp, 0x8);
 	printf("inode %d is in block group %d, inode table of this block group is at block %d\n", 
 				inode_num, bg_of_inode, inode_table_block_nr);
 	ext2_read_block(sb, inode_table_block_nr, tmp);
 
-	/* add offset into inode table, plus offset of inode.i_block (0x28) */
-	uint32_t off_into_bg_inode_table=sb->inode_size*((inode_num-1)%sb->inodes_per_group) + 0x28;
+	uint32_t off_into_bg_inode_table=sb->inode_size*((inode_num-1)%sb->inodes_per_group);
+	printf("inode info at offset %d\n", off_into_bg_inode_table);
 
 	/* copy block map */
-	memcpy((char*)bmap, tmp+off_into_bg_inode_table, 60);
+	memcpy((char*)bmap, tmp+off_into_bg_inode_table+0x28, 60);
 
 	printf("got block map: \n");
 	for(int i=0; i<15; i++) printf("%d ", INAT(uint32_t, bmap, 4*i));
 	printf("\n");
 
-	uint32_t fsize=INAT(uint32_t, tmp, off_into_bg_inode_table-0x28+0x4); 
+	uint32_t fsize=INAT(uint32_t, tmp, off_into_bg_inode_table+0x4); 
 	printf("file size=%d\n", fsize);
 
 	return(fsize);
 }
 
-/* reads at most bcount blocks whose numbers are in NULL-terminated blist, 
+/* read at most bcount blocks whose numbers are in NULL-terminated blist, 
  * returns number of blocks effectively read */
 int ext2_read_block_list(struct ext2_sb *sb, uint32_t *blist, int bcount, char *dest) {
 	int i;
@@ -149,21 +170,9 @@ int ext2_read_block_list(struct ext2_sb *sb, uint32_t *blist, int bcount, char *
 	return(i);
 }
 
-#if 0
-/* read at most max_block_count into dest, from the blist found at block addr */
-int ext2_read_bmap_ind(struct ext2_sb *sb, uint32_t addr, int max_block_count, char *dest) {
-	uint32_t blist[1024]; // blocksize<=4096 => number of block addr in a sector<=1024
-	ext2_read_block(sb, addr, (char*)blist);
-	int max_block_addr_in_block=(512*sb->block_size)/4;
-	int nread=ext2_read_block_list(sb, blist, 
-		(max_block_count>max_block_addr_in_block ? max_block_addr_in_block : max_block_count), dest);
-	return(nread);
-}
-#endif
-
 /* read from double-indirect(level=2) or indirect(level=1) addr in block map */
 int ext2_read_bmap_indirect(int level, struct ext2_sb *sb, uint32_t addr, int max_block_count, char *dest) {
-	uint32_t iblist[1024]; // blocksize<=4096 => number of block addr in a sector<=1024
+	uint32_t *iblist=malloc(1024); // blocksize<=1024 => number of block addr in a sector<=256
 	ext2_read_block(sb, addr, (char*)iblist);
 	int max_block_addr_in_block=(512*sb->block_size)/4;
 	int blocks_read=0;
@@ -171,14 +180,17 @@ int ext2_read_bmap_indirect(int level, struct ext2_sb *sb, uint32_t addr, int ma
 		int blk_count=max_block_addr_in_block;
 		if(blk_count>max_block_count) blk_count=max_block_count;
 		blocks_read=ext2_read_block_list(sb, iblist, blk_count, dest);
+		free(iblist);
 		return(blocks_read);
 	} else if(level>1) {
 		for(int i=0; i<max_block_addr_in_block && blocks_read<=max_block_count; i++) {
 			blocks_read += ext2_read_bmap_indirect(level-1, sb, iblist[i], max_block_count-blocks_read, dest+blocks_read*512*sb->block_size);
 		}
+		free(iblist);
 		return(blocks_read);
 	} else {
 		printf("Shouldn't happen\n");
+		free(iblist);
 		return(0);
 	}
 }
@@ -217,9 +229,9 @@ int ext2_read_bmap_contents(struct ext2_sb *sb, uint32_t *bmap, int max_block_co
 }
 
 /* reads at most max_block_count blocks of the data whose inode is inode_num */
-int ext2_read_inode_contents(struct ext2_sb *sb, uint32_t inode_num, int max_block_count, char *dest) {
-	uint32_t bmap[60];
-	uint32_t fsize=ext2_read_inode_block_map(sb, inode_num, dest, bmap); // use dest as scratch workspace
+/* bmap is a scratch of at least 60 bytes */
+int ext2_read_inode_contents(struct ext2_sb *sb, uint32_t inode_num, int max_block_count, uint32_t *bmap, char *dest) {
+	uint32_t fsize=ext2_read_inode_block_map(sb, inode_num, dest, bmap); // use dest as scratch
 	int block_count=(fsize+512*sb->block_size-1)/(512*sb->block_size);
 	if(max_block_count<block_count) {
 		printf("Warning: block_count of file (%d) is larger than max_block_count (%d); file will be truncated\n", block_count, max_block_count);
@@ -261,9 +273,13 @@ int load_ext2(phys_addr_t *uboot_base, phys_addr_t *optee_base, \
 		phys_addr_t *opensbi_base, phys_addr_t *dtb_base, char **cmdline) {
 	int rc;
 	int part_num;
-	char buf[4096];
-	struct ext2_sb sb;
+	char *mbr=malloc(512);
+	char *buf=malloc(1024);
+	char *rootdir=malloc(1024);
+	printf("addr rootdir=%lx\n",rootdir);
+	struct ext2_sb *sb=malloc(sizeof(struct ext2_sb));
 
+	printf("addr &rc=%lx &part_num=%lx mbr=%lx buf=%lx rootdir=%lx",&rc,&part_num,mbr,buf,rootdir);
 
 	*optee_base=*monitor_base=*rtos_base=0;
 	*cmdline=NULL;
@@ -272,18 +288,18 @@ int load_ext2(phys_addr_t *uboot_base, phys_addr_t *optee_base, \
 		return(rc);
 
 	/* fetch MBR */
-	if((rc=mmc_bread(SDC_NO, 0, 1, buf))<0) {
+	if((rc=mmc_bread(SDC_NO, 0, 1, mbr))<0) {
 		printf("Error reading MBR\n");
 		return(rc);
 	}
-	if(buf[510]!=0x55 || buf[511]!=0xAA) {
+	if(mbr[510]!=0x55 || mbr[511]!=0xAA) {
 		printf("Invalid MBR signature\n");
 		return(-1);
 	}
 
 	/* find an ext2 filesystem marked as bootable in part. table */
 	for(part_num=0; part_num<3; part_num++) {
-		if(ext2_sb_read(buf, part_num, buf+1024, &sb)>=0) 
+		if(ext2_sb_read(mbr, part_num, buf, sb)>=0) 
 			break;
 	}
 	if(part_num==3) {
@@ -292,18 +308,17 @@ int load_ext2(phys_addr_t *uboot_base, phys_addr_t *optee_base, \
 	}
 
 	/* read root directory (inode 2) */
-	ext2_read_bgtable(&sb);
-	char rootdir[4096];
-	uint32_t rootdir_size=ext2_read_inode_contents(&sb, 2, 1, rootdir);
+	//ext2_read_bgtable(sb);
+	uint32_t rootdir_size=ext2_read_inode_contents(sb, 2, 1, (uint32_t*)mbr, rootdir); // use mbr as scratch
 
 	printf("rootdir size=%d\n", rootdir_size);
 	for(int i=0;i<rootdir_size;i++) {
 		printf("%x ", rootdir[i]);
 	}
 
-	uint32_t inum=ext2_inode_num(&sb, "hello.txt", 9, rootdir, rootdir_size);
+	uint32_t inum=ext2_inode_num(sb, "hello.txt", 9, rootdir, rootdir_size); 
 	if(inum>0) {
-		uint32_t fsize=ext2_read_inode_contents(&sb, inum, 1, buf);
+		uint32_t fsize=ext2_read_inode_contents(sb, inum, 1, (uint32_t*)mbr, buf); // use mbr as scratch 
 		buf[fsize]=0;
 		printf("read : %s\n", buf);
 	} else {
