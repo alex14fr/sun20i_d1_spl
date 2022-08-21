@@ -79,7 +79,7 @@ int ext2_sb_read(char *mbr, int part_num, char *buf, struct ext2_sb *sb) {
 }
 
 int ext2_read_block(struct ext2_sb *sb, uint32_t block_num, char *buf) {
-	printf(" (read block %d part_off=%d block_size=%d)\n", block_num, sb->part_offset, sb->block_size);
+	//printf(" (read block %d part_off=%d block_size=%d)\n", block_num, sb->part_offset, sb->block_size);
 	int rc;
 	if((rc=mmc_bread(SDC_NO, sb->part_offset+block_num*sb->block_size, sb->block_size, buf))<0) {
 		printf("read block %d failed\n", block_num);
@@ -155,7 +155,7 @@ uint32_t ext2_read_inode_block_map(struct ext2_sb *sb, int inode_num, char *tmp,
 	/* copy block map */
 	memcpy((char*)bmap, tmp+off_into_sector+0x28, 60);
 	printf("got block map: \n");
-	for(int i=0; i<15; i++) printf("%d ", INAT(uint32_t, bmap, 4*i));
+	for(int i=0; i<15; i++) printf("%d ", bmap[i]);
 	printf("\n");
 
 	/* get file size */
@@ -177,8 +177,9 @@ int ext2_read_block_list(struct ext2_sb *sb, uint32_t *blist, int bcount, char *
 }
 
 /* read from double-indirect(level=2) or indirect(level=1) addr in block map */
-int ext2_read_bmap_indirect(int level, struct ext2_sb *sb, uint32_t addr, int max_block_count, char *dest) {
-	uint32_t *iblist=malloc(1024); // blocksize<=1024 => number of block addr in a sector<=256
+/* tmp is a scratch holding at least (level) blocks */
+int ext2_read_bmap_indirect(int level, struct ext2_sb *sb, uint32_t addr, int max_block_count, char *tmp, char *dest) {
+	uint32_t *iblist=(uint32_t*)(tmp+1024*(level-1)); // blocksize<=1024 => number of block addr in a sector<=256
 	ext2_read_block(sb, addr, (char*)iblist);
 	int max_block_addr_in_block=(512*sb->block_size)/4;
 	int blocks_read=0;
@@ -186,25 +187,23 @@ int ext2_read_bmap_indirect(int level, struct ext2_sb *sb, uint32_t addr, int ma
 		int blk_count=max_block_addr_in_block;
 		if(blk_count>max_block_count) blk_count=max_block_count;
 		blocks_read=ext2_read_block_list(sb, iblist, blk_count, dest);
-		free(iblist);
 		return(blocks_read);
 	} else if(level>1) {
 		for(int i=0; i<max_block_addr_in_block && blocks_read<=max_block_count; i++) {
-			blocks_read += ext2_read_bmap_indirect(level-1, sb, iblist[i], max_block_count-blocks_read, dest+blocks_read*512*sb->block_size);
+			blocks_read += ext2_read_bmap_indirect(level-1, sb, iblist[i], max_block_count-blocks_read, tmp, dest+blocks_read*512*sb->block_size);
 		}
-		free(iblist);
 		return(blocks_read);
 	} else {
 		printf("Shouldn't happen\n");
-		free(iblist);
 		return(0);
 	}
 }
 
 
 /* read contents (at most maxBlockNumber blocks) of an inode given its 60-byte block map */
+/* tmp is a scratch holding at least 2 blocks */
 /* returns number of blocks effectively read */
-int ext2_read_bmap_contents(struct ext2_sb *sb, uint32_t *bmap, int max_block_count, char *dest) {
+int ext2_read_bmap_contents(struct ext2_sb *sb, uint32_t *bmap, int max_block_count, char *tmp, char *dest) {
 	int rc;
 	int blocks_read;
 
@@ -215,13 +214,13 @@ int ext2_read_bmap_contents(struct ext2_sb *sb, uint32_t *bmap, int max_block_co
 	if(max_block_count<=0 || !bmap[12]) return(blocks_read);
 
 	/* indirect block */
-	rc=ext2_read_bmap_indirect(1, sb, bmap[12], max_block_count, dest+blocks_read*512*sb->block_size);
+	rc=ext2_read_bmap_indirect(1, sb, bmap[12], max_block_count, tmp, dest+blocks_read*512*sb->block_size);
 	blocks_read+=rc;
 	max_block_count-=rc;
 	if(max_block_count<=0 || !bmap[13]) return(blocks_read);
 
 	/* double-indirect block */
-	rc=ext2_read_bmap_indirect(2, sb, bmap[13], max_block_count, dest+blocks_read*512*sb->block_size);
+	rc=ext2_read_bmap_indirect(2, sb, bmap[13], max_block_count, tmp, dest+blocks_read*512*sb->block_size);
 	blocks_read+=rc;
 	max_block_count-=rc;
 	if(max_block_count<=0 || !bmap[14]) return(blocks_read);
@@ -235,8 +234,9 @@ int ext2_read_bmap_contents(struct ext2_sb *sb, uint32_t *bmap, int max_block_co
 }
 
 /* reads at most max_block_count blocks of the data whose inode is inode_num */
-/* bmap is a scratch of at least 60 bytes */
-int ext2_read_inode_contents(struct ext2_sb *sb, uint32_t inode_num, int max_block_count, uint32_t *bmap, char *dest) {
+/* tmp is a scratch of at least 60 bytes+2 blocks */
+int ext2_read_inode_contents(struct ext2_sb *sb, uint32_t inode_num, int max_block_count, char *tmp, char *dest) {
+	uint32_t *bmap=(uint32_t*)(tmp+2*512*sb->block_size);
 	uint32_t fsize=ext2_read_inode_block_map(sb, inode_num, dest, bmap); // use dest as scratch
 	int block_count=(fsize+512*sb->block_size-1)/(512*sb->block_size);
 	if(max_block_count<block_count) {
@@ -245,7 +245,7 @@ int ext2_read_inode_contents(struct ext2_sb *sb, uint32_t inode_num, int max_blo
 		max_block_count=block_count;
 		printf("max_block_count set to %d\n", block_count);
 	}
-	ext2_read_bmap_contents(sb, bmap, max_block_count, dest);
+	ext2_read_bmap_contents(sb, bmap, max_block_count, tmp, dest);
 	return(fsize);
 }
 
@@ -282,11 +282,11 @@ int load_ext2(phys_addr_t *uboot_base, phys_addr_t *optee_base, \
 	char *mbr=malloc(512);
 	char *buf=malloc(1024);
 	char *rootdir=malloc(1024);
-	printf("addr rootdir=%lx\n",rootdir);
+	//printf("addr rootdir=%lx\n",rootdir);
 	struct ext2_sb sbb;
 	struct ext2_sb *sb=&sbb; 
 
-	printf("addr &rc=%lx &part_num=%lx mbr=%lx buf=%lx rootdir=%lx",&rc,&part_num,mbr,buf,rootdir);
+	//printf("addr &rc=%lx &part_num=%lx mbr=%lx buf=%lx rootdir=%lx",&rc,&part_num,mbr,buf,rootdir);
 
 	*optee_base=*monitor_base=*rtos_base=0;
 	*cmdline=NULL;
@@ -315,19 +315,22 @@ int load_ext2(phys_addr_t *uboot_base, phys_addr_t *optee_base, \
 	}
 
 	/* read root directory (inode 2) */
-	//ext2_read_bgtable(sb);
-	uint32_t rootdir_size=ext2_read_inode_contents(sb, 2, 1, (uint32_t*)mbr, rootdir); // use mbr as scratch
+	uint32_t rootdir_size=ext2_read_inode_contents(sb, 2, 1, (char*)(SDRAM_OFFSET(0x00900000)), rootdir); 
 
+/*
 	printf("rootdir size=%d\n", rootdir_size);
 	for(int i=0;i<rootdir_size;i++) {
 		printf("%x ", rootdir[i]);
 	}
+*/
 
-	uint32_t inum=ext2_inode_num(sb, "hello.txt", 9, rootdir, rootdir_size); 
+	uint32_t inum=ext2_inode_num(sb, "hello.bin", 9, rootdir, rootdir_size); 
 	if(inum>0) {
-		uint32_t fsize=ext2_read_inode_contents(sb, inum, 1, (uint32_t*)mbr, buf); // use mbr as scratch 
-		buf[fsize]=0;
-		printf("read : %s\n", buf);
+		char* ddest=(char*)(SDRAM_OFFSET(0x01000000));
+		uint32_t fsize=ext2_read_inode_contents(sb, inum, 20000, (char*)(SDRAM_OFFSET(0x00900000)), ddest);
+		uint32_t toffs=15*1048576-4;
+		if(fsize);
+		printf("read : %x %x %x %x\n", ddest[toffs], ddest[toffs+1], ddest[toffs+2], ddest[toffs+3]);
 	} else {
 		printf("file not found\n");
 	}
