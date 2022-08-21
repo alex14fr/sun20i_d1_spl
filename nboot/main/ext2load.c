@@ -273,6 +273,18 @@ uint32_t ext2_inode_num(struct ext2_sb *sb, char *filename, uint16_t name_len, c
 	return(0); // not found
 }
 
+int ext2_load_file(struct ext2_sb *sb, char *filename, int filename_size, char *rootdir, uint32_t rootdir_size, uint32_t addr) {
+	printf("Loading %s at SDRAM_OFFSET(0x%x)... \n", filename, addr);
+	uint32_t inum=ext2_inode_num(sb, filename, filename_size, rootdir, rootdir_size); 
+	if(inum>0) {
+		char* ddest=(char*)(SDRAM_OFFSET(addr));
+		return ext2_read_inode_contents(sb, inum, 65535, (char*)(SDRAM_OFFSET(0x00900000)), ddest);
+	} else {
+		printf("file not found\n");
+		return(-1);
+	}
+}
+
 /* main function */
 int load_ext2(phys_addr_t *uboot_base, phys_addr_t *optee_base, \
 		phys_addr_t *monitor_base, phys_addr_t *rtos_base, \
@@ -324,6 +336,7 @@ int load_ext2(phys_addr_t *uboot_base, phys_addr_t *optee_base, \
 	}
 */
 
+/*
 	uint32_t inum=ext2_inode_num(sb, "hello.bin", 9, rootdir, rootdir_size); 
 	if(inum>0) {
 		char* ddest=(char*)(SDRAM_OFFSET(0x01000000));
@@ -334,8 +347,19 @@ int load_ext2(phys_addr_t *uboot_base, phys_addr_t *optee_base, \
 	} else {
 		printf("file not found\n");
 	}
+*/
 
-	while(1);
+#define SBI_OFF 0
+#define FDT_OFF 0x01000000
+#define IMG_OFF 0x02000000
+
+	ext2_load_file(sb, "opensbi.bin", 11, rootdir, rootdir_size, SBI_OFF);
+	ext2_load_file(sb, "fdt", 3, rootdir, rootdir_size, FDT_OFF);
+	ext2_load_file(sb, "Image", 5, rootdir, rootdir_size, IMG_OFF);
+
+	*uboot_base=SDRAM_OFFSET(IMG_OFF);
+	*opensbi_base=SDRAM_OFFSET(SBI_OFF);
+	*dtb_base=SDRAM_OFFSET(FDT_OFF);
 
 	return(0);
 }
