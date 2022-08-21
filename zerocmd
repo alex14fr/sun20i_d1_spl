@@ -1,0 +1,11 @@
+set -x
+block=/dev/sdb
+if grep -q $block /proc/mounts; then echo $block is mounted ; exit 1; fi
+if test -b $block; then
+	doas dd if=/dev/zero of=$block bs=512 seek=16 count=1
+	doas dd if=/dev/zero of=$block bs=512 seek=256 count=1
+	sync
+else
+	echo $block is not block device
+fi
+

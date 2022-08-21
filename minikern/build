@@ -1,0 +1,4 @@
+set -x
+${CROSS_COMPILE}gcc -c -Wall -std=c99 -O3 printa.c
+${CROSS_COMPILE}objcopy -O binary printa.o Image
+

@@ -349,7 +349,7 @@ int load_ext2(phys_addr_t *uboot_base, phys_addr_t *optee_base, \
 	}
 */
 
-#define SBI_OFF 0
+#define SBI_OFF 0x400
 #define FDT_OFF 0x01000000
 #define IMG_OFF 0x02000000
 
@@ -358,8 +358,8 @@ int load_ext2(phys_addr_t *uboot_base, phys_addr_t *optee_base, \
 	ext2_load_file(sb, "Image", 5, rootdir, rootdir_size, IMG_OFF);
 
 	*uboot_base=SDRAM_OFFSET(IMG_OFF);
-	*opensbi_base=SDRAM_OFFSET(SBI_OFF);
-	*dtb_base=SDRAM_OFFSET(FDT_OFF);
+	*opensbi_base=0; //SDRAM_OFFSET(IMG_OFF); //SDRAM_OFFSET(SBI_OFF);
+	*dtb_base=0; //SDRAM_OFFSET(FDT_OFF);
 
 	return(0);
 }
