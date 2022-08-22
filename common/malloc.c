@@ -35,6 +35,9 @@ static struct alloc_struct_t boot_heap_head, boot_heap_tail;
 
 __s32 malloc_init(__u32 pHeapHead, __u32 nHeapSize)
 {
+	return 0;
+
+
     boot_heap_head.size    = boot_heap_tail.size = 0;
     boot_heap_head.address = pHeapHead;
     boot_heap_tail.address = pHeapHead + nHeapSize;
@@ -57,6 +60,11 @@ __s32 malloc_init(__u32 pHeapHead, __u32 nHeapSize)
 */
 void *malloc(__u32 num_bytes)
 {
+	return 0;
+
+
+
+
     struct alloc_struct_t *ptr, *newptr;
     __u32  actual_bytes;
 
@@ -111,6 +119,11 @@ void *malloc(__u32 num_bytes)
 */
 void *realloc(void *p, __u32 num_bytes)
 {
+	return 0;
+
+
+
+
     struct alloc_struct_t *ptr, *prev;
     void   *tmp;
     __u32  actual_bytes;

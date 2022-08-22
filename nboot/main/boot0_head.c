@@ -89,7 +89,7 @@ const boot0_file_head_t  BT0_head = {
 			{2, 9, 6, 1, 0xff, 0xff, {0} }, /*PB9: 6--TX*/
 		},
 		/*__s32 enable_jtag;*/
-		0,
+		1,
 		/*normal_gpio_cfg	 jtag_gpio[5];*/
 		{
 			{6, 0, 4, 0xff, 0xff, 0xff, {0} },

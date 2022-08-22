@@ -273,12 +273,18 @@ uint32_t ext2_inode_num(struct ext2_sb *sb, char *filename, uint16_t name_len, c
 	return(0); // not found
 }
 
+#define LOAD_SCRATCH  0x01010000
+#define LOAD_SCRATCH2 0x01100000
+
 int ext2_load_file(struct ext2_sb *sb, char *filename, int filename_size, char *rootdir, uint32_t rootdir_size, uint32_t addr) {
 	printf("Loading %s at SDRAM_OFFSET(0x%x)... \n", filename, addr);
 	uint32_t inum=ext2_inode_num(sb, filename, filename_size, rootdir, rootdir_size); 
 	if(inum>0) {
 		char* ddest=(char*)(SDRAM_OFFSET(addr));
-		return ext2_read_inode_contents(sb, inum, 65535, (char*)(SDRAM_OFFSET(0x00900000)), ddest);
+		uint32_t fsize=ext2_read_inode_contents(sb, inum, 65535, (char*)(SDRAM_OFFSET(LOAD_SCRATCH)), ddest);
+		uint32_t nsectors=(fsize+1023)/1024;
+		printf("End at SDRAM_OFFSET(0x%x)\n", addr+1024*nsectors);
+		return(fsize);
 	} else {
 		printf("file not found\n");
 		return(-1);
@@ -291,9 +297,12 @@ int load_ext2(phys_addr_t *uboot_base, phys_addr_t *optee_base, \
 		phys_addr_t *opensbi_base, phys_addr_t *dtb_base, char **cmdline) {
 	int rc;
 	int part_num;
-	char *mbr=malloc(512);
-	char *buf=malloc(1024);
-	char *rootdir=malloc(1024);
+	char *mbr;
+	mbr=(char*)SDRAM_OFFSET(LOAD_SCRATCH2);
+	char *buf;
+	buf=(char*)SDRAM_OFFSET(LOAD_SCRATCH2+1024);
+	char *rootdir;
+	rootdir=(char*)SDRAM_OFFSET(LOAD_SCRATCH2+2048);
 	//printf("addr rootdir=%lx\n",rootdir);
 	struct ext2_sb sbb;
 	struct ext2_sb *sb=&sbb; 
@@ -327,7 +336,7 @@ int load_ext2(phys_addr_t *uboot_base, phys_addr_t *optee_base, \
 	}
 
 	/* read root directory (inode 2) */
-	uint32_t rootdir_size=ext2_read_inode_contents(sb, 2, 1, (char*)(SDRAM_OFFSET(0x00900000)), rootdir); 
+	uint32_t rootdir_size=ext2_read_inode_contents(sb, 2, 1, (char*)(SDRAM_OFFSET(LOAD_SCRATCH)), rootdir); 
 
 /*
 	printf("rootdir size=%d\n", rootdir_size);
@@ -340,7 +349,7 @@ int load_ext2(phys_addr_t *uboot_base, phys_addr_t *optee_base, \
 	uint32_t inum=ext2_inode_num(sb, "hello.bin", 9, rootdir, rootdir_size); 
 	if(inum>0) {
 		char* ddest=(char*)(SDRAM_OFFSET(0x01000000));
-		uint32_t fsize=ext2_read_inode_contents(sb, inum, 20000, (char*)(SDRAM_OFFSET(0x00900000)), ddest);
+		uint32_t fsize=ext2_read_inode_contents(sb, inum, 20000, (char*)(SDRAM_OFFSET(LOAD_SCRATCH)), ddest);
 		uint32_t toffs=15*1048576-4;
 		if(fsize);
 		printf("read : %x %x %x %x\n", ddest[toffs], ddest[toffs+1], ddest[toffs+2], ddest[toffs+3]);
@@ -349,17 +358,33 @@ int load_ext2(phys_addr_t *uboot_base, phys_addr_t *optee_base, \
 	}
 */
 
-#define SBI_OFF 0x400
-#define FDT_OFF 0x01000000
-#define IMG_OFF 0x02000000
+#define SBI_OFF 0
+#define FDT_OFF 0x4000000
+#define IMG_OFF 0x200000  // 0xa000000
+//#define       0x1010000
 
 	ext2_load_file(sb, "opensbi.bin", 11, rootdir, rootdir_size, SBI_OFF);
 	ext2_load_file(sb, "fdt", 3, rootdir, rootdir_size, FDT_OFF);
-	ext2_load_file(sb, "Image", 5, rootdir, rootdir_size, IMG_OFF);
+	int imgsz=ext2_load_file(sb, "Image", 5, rootdir, rootdir_size, IMG_OFF);
+	if(imgsz);
+	printf("begin image:\n");
+	for(int i=0;i<32;i++) printf("%x ",*(char*)(SDRAM_OFFSET(IMG_OFF+i)));
+	printf("end image:\n");
+	for(int i=imgsz-32;i<imgsz;i++) printf("%x ",*(char*)(SDRAM_OFFSET(IMG_OFF+i)));
+
 
 	*uboot_base=SDRAM_OFFSET(IMG_OFF);
-	*opensbi_base=0; //SDRAM_OFFSET(IMG_OFF); //SDRAM_OFFSET(SBI_OFF);
-	*dtb_base=0; //SDRAM_OFFSET(FDT_OFF);
+	*opensbi_base=SDRAM_OFFSET(SBI_OFF); //SDRAM_OFFSET(IMG_OFF); //SDRAM_OFFSET(SBI_OFF);
+	*dtb_base=SDRAM_OFFSET(FDT_OFF);
+
+/*
+	volatile char *iob=sunxi_get_iobase(SUNXI_UART0_BASE);
+	printf("uart_iobase=%lx\n", iob);
+
+	iob=(volatile char *)0x02500000;
+	printf("uart_iobase=%lx\n", iob);
+	while(1) *iob='b';
+*/
 
 	return(0);
 }

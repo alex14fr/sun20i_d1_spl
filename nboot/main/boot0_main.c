@@ -75,7 +75,7 @@ void main(void)
 	}
 
 	mmu_enable(dram_size);
-	malloc_init(CONFIG_HEAP_BASE, CONFIG_HEAP_SIZE);
+	//malloc_init(CONFIG_HEAP_BASE, CONFIG_HEAP_SIZE);
 	status = sunxi_board_late_init();
 	if (status)
 		goto _BOOT_ERROR;

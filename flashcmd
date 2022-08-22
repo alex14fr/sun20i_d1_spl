@@ -1,4 +1,5 @@
 set -x
+sh buildcmd || exit 2
 block=${1:-/dev/sdb}
 bin=nboot/boot0_sdcard_sun20iw1p1.bin
 if grep -q $block /proc/mounts; then echo $block is mounted ; exit 1; fi
